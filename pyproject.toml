@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "question-difficulty-analysis"
+version = "0.1.0"
+description = "Evidence-based H/C/T/D question difficulty rules with independent breakthrough flags"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{name = "cheng-bai"}]
+dependencies = []
+
+[project.scripts]
+question-difficulty = "question_difficulty.__main__:main"
+
+[project.urls]
+Repository = "https://github.com/cheng-bai/question-difficulty-analysis"
+
+[tool.setuptools.packages.find]
+include = ["question_difficulty*"]

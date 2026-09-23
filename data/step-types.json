@@ -1,0 +1,123 @@
+{
+  "version": "SH-HCT-v1.0",
+  "types": [
+    {
+      "type_id": "F",
+      "name": "公式与定义直接应用",
+      "version": "SH-HCT-v1.0",
+      "status": "本次临时类型，待复核",
+      "definition": "公式与定义直接应用且产生一个有意义中间结论",
+      "include": "主要动作属于此类型；每步仅取一个主要类型",
+      "exclude": "不将纯移项行数拆为多个步骤；不计备用解法",
+      "aliases": [],
+      "instances": 49,
+      "questions": 49,
+      "papers": 4
+    },
+    {
+      "type_id": "X",
+      "name": "条件转译",
+      "version": "SH-HCT-v1.0",
+      "status": "本次临时类型，待复核",
+      "definition": "条件转译且产生一个有意义中间结论",
+      "include": "主要动作属于此类型；每步仅取一个主要类型",
+      "exclude": "不将纯移项行数拆为多个步骤；不计备用解法",
+      "aliases": [],
+      "instances": 29,
+      "questions": 27,
+      "papers": 4
+    },
+    {
+      "type_id": "L",
+      "name": "逻辑推断与证明",
+      "version": "SH-HCT-v1.0",
+      "status": "本次临时类型，待复核",
+      "definition": "逻辑推断与证明且产生一个有意义中间结论",
+      "include": "主要动作属于此类型；每步仅取一个主要类型",
+      "exclude": "不将纯移项行数拆为多个步骤；不计备用解法",
+      "aliases": [],
+      "instances": 27,
+      "questions": 23,
+      "papers": 4
+    },
+    {
+      "type_id": "A",
+      "name": "代数化简与消元",
+      "version": "SH-HCT-v1.0",
+      "status": "本次临时类型，待复核",
+      "definition": "代数化简与消元且产生一个有意义中间结论",
+      "include": "主要动作属于此类型；每步仅取一个主要类型",
+      "exclude": "不将纯移项行数拆为多个步骤；不计备用解法",
+      "aliases": [],
+      "instances": 26,
+      "questions": 24,
+      "papers": 4
+    },
+    {
+      "type_id": "G",
+      "name": "几何与坐标转换",
+      "version": "SH-HCT-v1.0",
+      "status": "本次临时类型，待复核",
+      "definition": "几何与坐标转换且产生一个有意义中间结论",
+      "include": "主要动作属于此类型；每步仅取一个主要类型",
+      "exclude": "不将纯移项行数拆为多个步骤；不计备用解法",
+      "aliases": [],
+      "instances": 23,
+      "questions": 20,
+      "papers": 4
+    },
+    {
+      "type_id": "R",
+      "name": "值域与最值",
+      "version": "SH-HCT-v1.0",
+      "status": "本次临时类型，待复核",
+      "definition": "值域与最值且产生一个有意义中间结论",
+      "include": "主要动作属于此类型；每步仅取一个主要类型",
+      "exclude": "不将纯移项行数拆为多个步骤；不计备用解法",
+      "aliases": [],
+      "instances": 13,
+      "questions": 13,
+      "papers": 4
+    },
+    {
+      "type_id": "B",
+      "name": "分类边界闭合",
+      "version": "SH-HCT-v1.0",
+      "status": "本次临时类型，待复核",
+      "definition": "分类边界闭合且产生一个有意义中间结论",
+      "include": "主要动作属于此类型；每步仅取一个主要类型",
+      "exclude": "不将纯移项行数拆为多个步骤；不计备用解法",
+      "aliases": [],
+      "instances": 29,
+      "questions": 26,
+      "papers": 4
+    },
+    {
+      "type_id": "N",
+      "name": "构造与反证",
+      "version": "SH-HCT-v1.0",
+      "status": "本次临时类型，待复核",
+      "definition": "构造与反证且产生一个有意义中间结论",
+      "include": "主要动作属于此类型；每步仅取一个主要类型",
+      "exclude": "不将纯移项行数拆为多个步骤；不计备用解法",
+      "aliases": [],
+      "instances": 8,
+      "questions": 6,
+      "papers": 3
+    },
+    {
+      "type_id": "S",
+      "name": "统计与计数",
+      "version": "SH-HCT-v1.0",
+      "status": "本次临时类型，待复核",
+      "definition": "统计与计数且产生一个有意义中间结论",
+      "include": "主要动作属于此类型；每步仅取一个主要类型",
+      "exclude": "不将纯移项行数拆为多个步骤；不计备用解法",
+      "aliases": [],
+      "instances": 16,
+      "questions": 15,
+      "papers": 4
+    }
+  ],
+  "deduplication": "2025同题前后版本合为同一小问，不重复计数；其余四卷按年份题号保留，未发现整题逐字重复，未因同型而去重。"
+}
