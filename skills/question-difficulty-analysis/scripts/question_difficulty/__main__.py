@@ -36,9 +36,21 @@ def main():
     parser.add_argument("--scope", choices=("auto", "question", "paper"), default="auto",
                         help="分析范围；多小问单题可设question；旧数组默认paper")
     parser.add_argument("--output", type=Path, help="结果JSON；省略则输出到终端")
+    parser.add_argument("--suggest-labels", action="store_true",
+                        help="[需完整包] 使用TypeSafe Jev模型建议标签；skill bundle不支持，请安装完整包: pip install question-difficulty-analysis[typesafe]")
+    parser.add_argument("--confidence-threshold", type=float, default=0.6,
+                        help="Jev建议的置信度阈值（默认0.6；需--suggest-labels）")
     args = parser.parse_args()
     try:
         data = json.loads(args.input.read_text(encoding="utf-8-sig"))
+        
+        # Handle --suggest-labels
+        if args.suggest_labels:
+            print("错误：--suggest-labels 需要完整包，skill bundle 不包含此功能。", file=sys.stderr)
+            print("请安装完整包: pip install question-difficulty-analysis[typesafe]", file=sys.stderr)
+            print("然后运行: python -m question_difficulty <input> --suggest-labels", file=sys.stderr)
+            return 2
+        
         result = score_input(data, args.scope)
         text = json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
         if args.output:
