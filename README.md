@@ -44,6 +44,42 @@ python skills/question-difficulty-analysis/scripts/score.py skills/question-diff
 
 Skill 负责规定完整教学流程；程序只复算给定步骤、六维和风险证据，仍需人工或AI核验数学内容。仓库主程序与 Skill 中的程序保持相同实现，并由测试检查同步。
 
+## Jev 标签建议（可选）
+
+本项目可选集成 TypeSafe 的 Jev 模型，用于**建议** K/R/A/V/P/I、T 和 B 标签。这是一个辅助功能，所有建议均需教师确认后方可使用。
+
+**重要说明：**
+- Jev 只建议标签，D 仍由规则计算
+- TypeSafe 文档指出非英文文本准确率较低，阈值需在上海案例上调优
+- 默认安装不包含此功能，CLI 和 API 行为不变
+
+安装可选依赖：
+
+```bash
+pip install question-difficulty-analysis[typesafe]
+```
+
+设置 API 密钥（从 [TypeSafe 控制台](https://console.typesafe.ai) 获取）：
+
+```bash
+export TYPESAFE_API_KEY=your-key-here
+```
+
+使用 CLI 获取建议：
+
+```bash
+python -m question_difficulty examples/single-question.json --suggest-labels
+```
+
+运行评估脚本（仅在设置了 API key 时运行）：
+
+```bash
+python scripts/eval_jev.py --sample 10  # 随机抽样10题评估
+python scripts/eval_jev.py --limit 5 --output eval-results.json  # 前5题，输出JSON
+```
+
+如果未安装 SDK 或未设置 API key，使用 `--suggest-labels` 会输出简短提示，其他功能正常运行。
+
 ## 五分钟运行
 
 需要Python 3.10或更新版本。直接运行不需要安装第三方库，也不需要API密钥。
