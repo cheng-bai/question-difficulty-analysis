@@ -1,0 +1,19 @@
+{
+  "id": "unlabeled-example",
+  "score": 5,
+  "pending": false,
+  "module": "不等式",
+  "answer": "(1, 3)",
+  "steps": [
+    {
+      "id": "S1",
+      "type_id": "X",
+      "input": "不等式 |x-2| < 1",
+      "action": "去绝对值，得 -1 < x-2 < 1",
+      "output": "1 < x < 3",
+      "dependencies": []
+    }
+  ],
+  "branches": 0,
+  "_comment": "此示例用于测试 --suggest-labels 功能。仅包含步骤结构，缺少 dimensions/t/B 标签，由 Jev 建议填充后供教师确认。"
+}

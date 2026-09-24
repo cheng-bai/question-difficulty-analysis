@@ -679,26 +679,39 @@ def apply_suggestions_to_question(
     config: SuggestionConfig | None = None,
     overwrite_existing: bool = False,
 ) -> dict:
-    """Apply Jev suggestions to a question dict.
+    """Apply Jev suggestions to a question dict, filling missing labels.
     
-    Only applies suggestions that meet confidence thresholds.
-    Low-confidence suggestions are skipped and marked for review.
-    Existing human labels are preserved unless overwrite_existing=True.
+    This function fills missing dimension, T, and B labels with Jev suggestions,
+    making the question ready for scoring by the engine. Existing human labels
+    are NEVER overwritten (unless overwrite_existing=True); disagreements are
+    recorded in jev_meta instead.
     
     Args:
-        question: Original question dict.
+        question: Original question dict. Steps need input/action/output/dependencies
+            but dimensions/t/B can be missing.
         suggestion: QuestionSuggestion from suggest_question_labels.
         config: Configuration for confidence thresholds.
-        overwrite_existing: If True, overwrite existing labels.
+        overwrite_existing: If True, overwrite existing labels (default False).
     
     Returns:
-        Modified question dict with suggested labels applied.
+        Modified question dict with:
+        - Missing labels filled from suggestions
+        - jev_labels_pending: True (marker that labels need teacher confirmation)
+        - jev_needs_review: True if any low confidence/ambiguity
+        - jev_review_reasons: List of reasons for review
+        - jev_meta: Raw probabilities, confidence, and disagreements
     """
     if config is None:
         config = SuggestionConfig()
     
     import copy
     result = copy.deepcopy(question)
+    
+    # Track what was filled vs preserved
+    jev_meta = copy.deepcopy(suggestion.jev_meta)
+    jev_meta["filled_fields"] = []
+    jev_meta["preserved_human_labels"] = []
+    jev_meta["disagreements"] = []
     
     # Apply step dimension suggestions
     steps_by_id = {s["id"]: s for s in result.get("steps", [])}
@@ -719,59 +732,135 @@ def apply_suggestions_to_question(
                 and step["dimensions"][dim] is not None
             )
             
-            if has_existing and not overwrite_existing:
-                continue
+            if has_existing:
+                # Record disagreement if values differ
+                human_value = step["dimensions"][dim]
+                jev_value = dim_suggestion.value
+                
+                jev_meta["preserved_human_labels"].append({
+                    "field": f"step.{step_suggestion.step_id}.{dim}",
+                    "human_value": human_value,
+                    "jev_suggestion": jev_value,
+                    "jev_confidence": dim_suggestion.confidence,
+                })
+                
+                if human_value != jev_value:
+                    jev_meta["disagreements"].append({
+                        "field": f"step.{step_suggestion.step_id}.{dim}",
+                        "human_value": human_value,
+                        "jev_suggestion": jev_value,
+                        "jev_confidence": dim_suggestion.confidence,
+                        "note": f"Human labeled {dim}={human_value}, Jev suggests {jev_value} (confidence {dim_suggestion.confidence:.2f})",
+                    })
+                
+                if not overwrite_existing:
+                    continue
             
-            if dim_suggestion.confidence < config.confidence_threshold:
-                if config.mark_low_confidence_review:
-                    step["dimension_evidence"][dim] = (
-                        f"[Jev建议待复核，置信度{dim_suggestion.confidence:.2f}] "
-                        f"建议值{dim_suggestion.value}，概率分布{dim_suggestion.probabilities}"
-                    )
-                continue
-            
+            # Fill the missing field
+            # For low confidence, still fill but mark for review
             step["dimensions"][dim] = dim_suggestion.value
-            step["dimension_evidence"][dim] = (
-                f"[Jev建议，置信度{dim_suggestion.confidence:.2f}，待教师确认] "
-                f"{DIMENSION_CRITERIA[dim]['levels'][dim_suggestion.value]}"
-            )
+            
+            if dim_suggestion.confidence >= config.confidence_threshold:
+                step["dimension_evidence"][dim] = (
+                    f"[Jev建议，置信度{dim_suggestion.confidence:.2f}，待教师确认] "
+                    f"{DIMENSION_CRITERIA[dim]['levels'][dim_suggestion.value]}"
+                )
+            else:
+                step["dimension_evidence"][dim] = (
+                    f"[Jev建议待复核，置信度{dim_suggestion.confidence:.2f}] "
+                    f"建议值{dim_suggestion.value}，概率分布{dim_suggestion.probabilities}"
+                )
+            
+            jev_meta["filled_fields"].append(f"step.{step_suggestion.step_id}.{dim}")
     
     # Apply T suggestions
     has_existing_t = (
         "t" in result
         and isinstance(result["t"], list)
-        and any(v is not None for v in result["t"])
+        and len(result["t"]) == 5
+        and all(v is not None for v in result["t"])
     )
     
-    if not has_existing_t or overwrite_existing:
-        all_t_confident = all(
-            item["confidence"] >= config.confidence_threshold
-            for item in suggestion.t_suggestion.items
-        )
+    if has_existing_t:
+        # Record disagreements for T
+        for i, (human_val, item) in enumerate(zip(result["t"], suggestion.t_suggestion.items), 1):
+            jev_val = item["value"]
+            jev_meta["preserved_human_labels"].append({
+                "field": f"t[{i}]",
+                "human_value": human_val,
+                "jev_suggestion": jev_val,
+                "jev_confidence": item["confidence"],
+            })
+            if human_val != jev_val:
+                jev_meta["disagreements"].append({
+                    "field": f"t[{i}]",
+                    "human_value": human_val,
+                    "jev_suggestion": jev_val,
+                    "jev_confidence": item["confidence"],
+                    "note": f"Human labeled t[{i}]={human_val}, Jev suggests {jev_val} (confidence {item['confidence']:.2f})",
+                })
         
-        if all_t_confident or not has_existing_t:
+        if not overwrite_existing:
+            pass  # Keep existing T
+        else:
             result["t"] = suggestion.t_suggestion.values
             result["T_evidence"] = [
-                {
-                    "item": item["item"],
-                    "value": item["value"],
-                    "evidence": item["evidence"],
-                }
+                {"item": item["item"], "value": item["value"], "evidence": item["evidence"]}
                 for item in suggestion.t_suggestion.items
             ]
+            jev_meta["filled_fields"].append("t")
+    else:
+        # Fill missing T
+        result["t"] = suggestion.t_suggestion.values
+        result["T_evidence"] = [
+            {"item": item["item"], "value": item["value"], "evidence": item["evidence"]}
+            for item in suggestion.t_suggestion.items
+        ]
+        jev_meta["filled_fields"].append("t")
     
     # Apply B suggestion
     has_existing_b = "B" in result and result["B"] is not None
     
-    if not has_existing_b or overwrite_existing:
-        if suggestion.b_suggestion.confidence >= config.confidence_threshold:
+    if has_existing_b:
+        human_b = result["B"]
+        jev_b = suggestion.b_suggestion.value
+        jev_meta["preserved_human_labels"].append({
+            "field": "B",
+            "human_value": human_b,
+            "jev_suggestion": jev_b,
+            "jev_confidence": suggestion.b_suggestion.confidence,
+        })
+        if human_b != jev_b:
+            jev_meta["disagreements"].append({
+                "field": "B",
+                "human_value": human_b,
+                "jev_suggestion": jev_b,
+                "jev_confidence": suggestion.b_suggestion.confidence,
+                "note": f"Human labeled B={human_b}, Jev suggests {jev_b} (confidence {suggestion.b_suggestion.confidence:.2f})",
+            })
+        
+        if not overwrite_existing:
+            pass  # Keep existing B
+        else:
             result["B"] = suggestion.b_suggestion.value
             result["B_evidence"] = (
                 f"[Jev建议，置信度{suggestion.b_suggestion.confidence:.2f}，待教师确认] "
                 f"{B_CRITERIA[suggestion.b_suggestion.value]}"
             )
+            jev_meta["filled_fields"].append("B")
+    else:
+        # Fill missing B
+        result["B"] = suggestion.b_suggestion.value
+        result["B_evidence"] = (
+            f"[Jev建议，置信度{suggestion.b_suggestion.confidence:.2f}，待教师确认] "
+            f"{B_CRITERIA[suggestion.b_suggestion.value]}"
+        )
+        jev_meta["filled_fields"].append("B")
     
-    # Add review flag if any low confidence
+    # Always mark that labels are Jev suggestions pending confirmation
+    result["jev_labels_pending"] = True
+    
+    # Add review flag if any low confidence, no stem, or ambiguity
     any_needs_review = (
         any(s.needs_review for s in suggestion.step_suggestions)
         or suggestion.t_suggestion.needs_review
@@ -779,19 +868,47 @@ def apply_suggestions_to_question(
         or suggestion.has_ambiguity
     )
     
-    if any_needs_review:
-        result["jev_needs_review"] = True
-        review_reasons = []
-        for s in suggestion.step_suggestions:
-            review_reasons.extend(s.review_reasons)
-        review_reasons.extend(suggestion.t_suggestion.review_reasons)
-        review_reasons.extend(suggestion.b_suggestion.review_reasons)
-        if suggestion.has_ambiguity:
-            review_reasons.append(suggestion.ambiguity_note)
+    # Collect all review reasons
+    review_reasons = []
+    for s in suggestion.step_suggestions:
+        review_reasons.extend(s.review_reasons)
+    review_reasons.extend(suggestion.t_suggestion.review_reasons)
+    review_reasons.extend(suggestion.b_suggestion.review_reasons)
+    if suggestion.has_ambiguity:
+        review_reasons.append(suggestion.ambiguity_note)
+    
+    # Add low-confidence reasons for each filled field
+    for step_s in suggestion.step_suggestions:
+        for dim, dim_s in step_s.dimensions.items():
+            if dim_s.confidence < config.confidence_threshold:
+                field = f"step.{step_s.step_id}.{dim}"
+                if field in jev_meta["filled_fields"]:
+                    reason = f"{field}: low confidence {dim_s.confidence:.2f}"
+                    if reason not in review_reasons:
+                        review_reasons.append(reason)
+                        any_needs_review = True
+    
+    for i, item in enumerate(suggestion.t_suggestion.items, 1):
+        if item["confidence"] < config.confidence_threshold:
+            if "t" in jev_meta["filled_fields"]:
+                reason = f"t[{i}]: low confidence {item['confidence']:.2f}"
+                if reason not in review_reasons:
+                    review_reasons.append(reason)
+                    any_needs_review = True
+    
+    if suggestion.b_suggestion.confidence < config.confidence_threshold:
+        if "B" in jev_meta["filled_fields"]:
+            reason = f"B: low confidence {suggestion.b_suggestion.confidence:.2f}"
+            if reason not in review_reasons:
+                review_reasons.append(reason)
+                any_needs_review = True
+    
+    result["jev_needs_review"] = any_needs_review
+    if review_reasons:
         result["jev_review_reasons"] = review_reasons
     
     # Store metadata
-    result["jev_meta"] = suggestion.jev_meta
+    result["jev_meta"] = jev_meta
     
     return result
 

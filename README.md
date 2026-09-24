@@ -65,13 +65,38 @@ pip install question-difficulty-analysis[typesafe]
 export TYPESAFE_API_KEY=your-key-here
 ```
 
-使用 CLI 获取建议：
+### 填充无标签输入并评分
+
+对于只有步骤结构但缺少 dimensions/t/B 标签的输入（如 `examples/unlabeled-question.json`），可以使用 `--suggest-labels` 填充缺失标签并评分：
 
 ```bash
-python -m question_difficulty examples/single-question.json --suggest-labels
+# 填充缺失标签并评分，输出到终端
+python -m question_difficulty examples/unlabeled-question.json --suggest-labels
+
+# 填充并评分，同时保存可编辑的草稿供教师修改
+python -m question_difficulty examples/unlabeled-question.json --suggest-labels \
+    --draft-output draft.json --output result.json
 ```
 
-运行评估脚本（仅在设置了 API key 时运行）：
+**工作流程：**
+1. Jev 为缺失字段建议标签值（已有人工标签不会被覆盖）
+2. 填充后的数据由规则引擎评分（HCT-rules-v1.1 不变）
+3. 输出 JSON 包含评分结果和 Jev 标记：
+   - `jev_labels_pending: true` — 标签待教师确认
+   - `jev_needs_review: true` — 存在低置信度或缺少题干文本
+   - `jev_review_reasons: [...]` — 需要复核的具体原因
+   - `jev_meta: {...}` — 原始概率分布和分歧记录
+
+**编辑草稿后重新评分：**
+
+```bash
+# 教师编辑 draft.json 中的标签后
+python -m question_difficulty draft.json --output final-result.json
+```
+
+### 评估脚本
+
+运行评估脚本与上海数据对比（仅在设置了 API key 时运行）：
 
 ```bash
 python scripts/eval_jev.py --sample 10  # 随机抽样10题评估

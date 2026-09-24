@@ -540,5 +540,242 @@ class TestFormatSummary(unittest.TestCase):
                 self.assertIn("TypeSafe", summary)
 
 
+class TestFillAndScore(unittest.TestCase):
+    """Test filling missing labels and scoring."""
+    
+    @classmethod
+    def setUpClass(cls):
+        """Set up mock SDK module."""
+        if 'typesafe_sdk' not in sys.modules:
+            setup_mock_typesafe_sdk()
+    
+    def setUp(self):
+        """Load unlabeled example."""
+        self.unlabeled_question = json.loads(
+            (ROOT / "examples" / "unlabeled-question.json").read_text(encoding="utf-8")
+        )
+        self.labeled_question = json.loads(
+            (ROOT / "examples" / "single-question.json").read_text(encoding="utf-8")
+        )
+    
+    def test_unlabeled_input_gets_filled(self):
+        """Test that unlabeled input has missing fields filled."""
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-key"}):
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.system_one = MagicMock(
+                return_value=make_mock_response(
+                    dimension_values={"K": 1, "R": 1, "A": 0, "V": 0, "P": 0, "I": 0},
+                    t_values=[1, 0, 0, 0, 0],
+                    b_value=1
+                )
+            )
+            
+            with patch("typesafe_sdk.TypeSafeClient", return_value=mock_client):
+                from question_difficulty.jev_suggest import (
+                    suggest_question_labels, apply_suggestions_to_question, SuggestionConfig
+                )
+                
+                # Verify input has no dimensions
+                self.assertNotIn("dimensions", self.unlabeled_question["steps"][0])
+                self.assertNotIn("t", self.unlabeled_question)
+                self.assertNotIn("B", self.unlabeled_question)
+                
+                suggestion = suggest_question_labels(self.unlabeled_question, SuggestionConfig())
+                result = apply_suggestions_to_question(self.unlabeled_question, suggestion)
+                
+                # Check dimensions were filled
+                self.assertIn("dimensions", result["steps"][0])
+                self.assertEqual(result["steps"][0]["dimensions"]["K"], 1)
+                self.assertEqual(result["steps"][0]["dimensions"]["R"], 1)
+                
+                # Check t was filled
+                self.assertIn("t", result)
+                self.assertEqual(len(result["t"]), 5)
+                self.assertEqual(result["t"][0], 1)
+                
+                # Check B was filled
+                self.assertIn("B", result)
+                self.assertEqual(result["B"], 1)
+                
+                # Check metadata tracks filled fields
+                self.assertIn("jev_meta", result)
+                filled = result["jev_meta"]["filled_fields"]
+                self.assertIn("step.S1.K", filled)
+                self.assertIn("t", filled)
+                self.assertIn("B", filled)
+    
+    def test_unlabeled_input_can_be_scored(self):
+        """Test that filled unlabeled input can be scored by engine."""
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-key"}):
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.system_one = MagicMock(
+                return_value=make_mock_response(
+                    dimension_values={"K": 1, "R": 1, "A": 0, "V": 0, "P": 0, "I": 0},
+                    t_values=[1, 0, 0, 0, 0],
+                    b_value=1
+                )
+            )
+            
+            with patch("typesafe_sdk.TypeSafeClient", return_value=mock_client):
+                from question_difficulty.jev_suggest import (
+                    suggest_question_labels, apply_suggestions_to_question, SuggestionConfig
+                )
+                from question_difficulty.engine import score_question
+                
+                suggestion = suggest_question_labels(self.unlabeled_question, SuggestionConfig())
+                filled = apply_suggestions_to_question(self.unlabeled_question, suggestion)
+                
+                # Remove jev markers that engine doesn't know about
+                filled_for_scoring = filled.copy()
+                for key in ["jev_labels_pending", "jev_needs_review", "jev_review_reasons", "jev_meta"]:
+                    filled_for_scoring.pop(key, None)
+                
+                # Should be able to score without error
+                result = score_question(filled_for_scoring)
+                
+                self.assertIn("D", result)
+                self.assertIn("H", result)
+                self.assertIsInstance(result["D"], (int, float))
+    
+    def test_human_labels_preserved_with_disagreement(self):
+        """Test that existing human labels are preserved and disagreements recorded."""
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-key"}):
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            # Jev suggests different values than human labels
+            mock_client.system_one = MagicMock(
+                return_value=make_mock_response(
+                    dimension_values={"K": 2, "R": 2, "A": 2, "V": 2, "P": 2, "I": 2},
+                    t_values=[2, 2, 2, 2, 2],
+                    b_value=3
+                )
+            )
+            
+            with patch("typesafe_sdk.TypeSafeClient", return_value=mock_client):
+                from question_difficulty.jev_suggest import (
+                    suggest_question_labels, apply_suggestions_to_question, SuggestionConfig
+                )
+                
+                # Original has K=1, R=1, t=[1,0,0,0,1], B=1
+                original_k = self.labeled_question["steps"][0]["dimensions"]["K"]
+                original_t = self.labeled_question["t"].copy()
+                original_b = self.labeled_question["B"]
+                
+                suggestion = suggest_question_labels(self.labeled_question, SuggestionConfig())
+                result = apply_suggestions_to_question(self.labeled_question, suggestion)
+                
+                # Human labels should be preserved
+                self.assertEqual(result["steps"][0]["dimensions"]["K"], original_k)
+                self.assertEqual(result["t"], original_t)
+                self.assertEqual(result["B"], original_b)
+                
+                # Disagreements should be recorded in jev_meta
+                disagreements = result["jev_meta"]["disagreements"]
+                self.assertTrue(len(disagreements) > 0)
+                
+                # Check specific disagreement format
+                k_disagreement = next(
+                    (d for d in disagreements if "K" in d["field"]), None
+                )
+                self.assertIsNotNone(k_disagreement)
+                self.assertEqual(k_disagreement["human_value"], original_k)
+                self.assertEqual(k_disagreement["jev_suggestion"], 2)
+    
+    def test_output_markers_present(self):
+        """Test that output includes jev_labels_pending and other markers."""
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-key"}):
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.system_one = MagicMock(
+                return_value=make_mock_response(
+                    dimension_values={"K": 1, "R": 1, "A": 0, "V": 0, "P": 0, "I": 0},
+                    t_values=[1, 0, 0, 0, 0],
+                    b_value=1
+                )
+            )
+            
+            with patch("typesafe_sdk.TypeSafeClient", return_value=mock_client):
+                from question_difficulty.jev_suggest import (
+                    suggest_question_labels, apply_suggestions_to_question, SuggestionConfig
+                )
+                
+                suggestion = suggest_question_labels(self.unlabeled_question, SuggestionConfig())
+                result = apply_suggestions_to_question(self.unlabeled_question, suggestion)
+                
+                # Mandatory markers
+                self.assertIn("jev_labels_pending", result)
+                self.assertTrue(result["jev_labels_pending"])
+                
+                # Review marker (should be true since no question_text)
+                self.assertIn("jev_needs_review", result)
+                self.assertTrue(result["jev_needs_review"])
+                
+                # Review reasons should include no question_text
+                self.assertIn("jev_review_reasons", result)
+                self.assertTrue(any("no question_text" in r for r in result["jev_review_reasons"]))
+                
+                # Metadata should include filled_fields
+                self.assertIn("jev_meta", result)
+                self.assertIn("filled_fields", result["jev_meta"])
+                self.assertIn("preserved_human_labels", result["jev_meta"])
+                self.assertIn("disagreements", result["jev_meta"])
+    
+    def test_partial_labels_filled(self):
+        """Test that partial labels get filled while existing ones preserved."""
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-key"}):
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.system_one = MagicMock(
+                return_value=make_mock_response(
+                    dimension_values={"K": 1, "R": 1, "A": 1, "V": 1, "P": 1, "I": 1},
+                    t_values=[1, 1, 1, 1, 1],
+                    b_value=2
+                )
+            )
+            
+            with patch("typesafe_sdk.TypeSafeClient", return_value=mock_client):
+                from question_difficulty.jev_suggest import (
+                    suggest_question_labels, apply_suggestions_to_question, SuggestionConfig
+                )
+                
+                # Create question with only some dimensions set
+                partial_question = json.loads(json.dumps(self.unlabeled_question))
+                partial_question["steps"][0]["dimensions"] = {
+                    "K": 0,  # Only K set, others missing
+                }
+                # Set B but not t
+                partial_question["B"] = 0
+                
+                suggestion = suggest_question_labels(partial_question, SuggestionConfig())
+                result = apply_suggestions_to_question(partial_question, suggestion)
+                
+                # K should be preserved (original was 0)
+                self.assertEqual(result["steps"][0]["dimensions"]["K"], 0)
+                
+                # Other dimensions should be filled
+                self.assertEqual(result["steps"][0]["dimensions"]["R"], 1)
+                self.assertEqual(result["steps"][0]["dimensions"]["A"], 1)
+                
+                # t should be filled (was missing)
+                self.assertEqual(result["t"], [1, 1, 1, 1, 1])
+                
+                # B should be preserved (original was 0)
+                self.assertEqual(result["B"], 0)
+                
+                # Check filled_fields doesn't include K and B
+                filled = result["jev_meta"]["filled_fields"]
+                self.assertNotIn("step.S1.K", filled)
+                self.assertIn("step.S1.R", filled)
+                self.assertIn("t", filled)
+                self.assertNotIn("B", filled)
+
+
 if __name__ == "__main__":
     unittest.main()
