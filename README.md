@@ -4,7 +4,7 @@
 
 本项目源于一次2023—2026上海秋季高考数学整卷分析：不是只做难度汇总表，而是保留试卷内容、核验解析、逐小问评分，再解释教师应该讲透什么。
 
-当前发布 **v0.1.1**：一个可独立运行的规则评分程序、完整分析提示词、115个小问的案例记录、三组对比图、项目总结和发展规划。
+当前发布 **v0.1.2**：一个可独立运行的规则评分程序、可安装的分析 Skill、完整分析提示词、115个小问的案例记录、三组对比图、项目总结和发展规划。
 
 > 这是尚未实测校准的结构难度规则，不是学生失分率预测。程序不会自动证明答案正确，也不会仅凭题干自动给出可靠评分；解题、划步、六维赋值和证据目前由教师或AI提供并审校。
 
@@ -17,6 +17,7 @@
 | 看项目为什么做、完成了什么、还缺什么 | [项目总结](docs/项目总结.md) |
 | 理解H、C、T、D、B的含义和计算 | [算法说明](docs/算法说明.md) |
 | 按规则完整分析一张新卷 | [通用提示词](prompts/整卷难度量化与解析关键批注-通用提示词.md) |
+| 在 Codex 中反复处理单题、题组或整卷 | [题目难度分析 Skill](skills/question-difficulty-analysis/SKILL.md) |
 | 看四年难度变化与教学洞察 | [四年案例洞察](docs/四年案例洞察.md) |
 | 查看未来任务和完成标准 | [发展规划](docs/发展规划.md) |
 | 提交新试卷或复核已有评分 | [贡献指南](CONTRIBUTING.md) |
@@ -29,6 +30,19 @@
 - [单题使用说明](docs/单题分析使用说明.md)
 - [2024年第21题三小问示范](docs/单题示范-2024第21题.md)
 - [可复算的示范输入](examples/single-multipart.json)
+
+## 安装 Skill
+
+Skill 已包含完整工作规则、单题样例和离线复算程序。把 [skill 目录](skills/question-difficulty-analysis)复制到本机 Codex 的 `skills/question-difficulty-analysis` 目录后，新任务可直接提出“按题目难度分析 Skill 分析这道题”或“按同一规则处理整卷”。已经打开的任务可能需要重新载入技能列表。
+
+在仓库根目录可先检验打包程序：
+
+```bash
+python skills/question-difficulty-analysis/scripts/score.py skills/question-difficulty-analysis/examples/single-question.json --output result.json
+python skills/question-difficulty-analysis/scripts/score.py skills/question-difficulty-analysis/examples/single-multipart.json --output multipart-result.json
+```
+
+Skill 负责规定完整教学流程；程序只复算给定步骤、六维和风险证据，仍需人工或AI核验数学内容。仓库主程序与 Skill 中的程序保持相同实现，并由测试检查同步。
 
 ## 五分钟运行
 
@@ -105,6 +119,6 @@ print(result["statistics"])
 
 ---
 
-版本号：v1.1
+版本号：v1.2
 更新日期：2026-09-24
-更新说明：加入单题入口、说明和示范；代码v0.1.1、提示词v1.2，规则与四年案例快照仍为v1.1。
+更新说明：新增可安装的单题与整卷分析 Skill，内含完整规则、样例和离线复算程序。
