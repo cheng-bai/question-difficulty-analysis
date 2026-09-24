@@ -221,4 +221,4 @@ def score_paper(questions):
                  weighted_scope="整卷分值已知且全部定分" if complete else "只可报告分值明确且已定分的子集",
                  mean_HCT={k:mean(r[k] for r in valid) if valid else None for k in "HCT"},
                  peak_profile={k:mean(r["peak"][k] for r in valid) if valid else None for k in DIMENSIONS})
-    return {"algorithm": "HCT-rules-v1.1", "engine": "0.1.0", "statistics": stats, "questions": results}
+    return {"algorithm": "HCT-rules-v1.1", "engine": "0.1.1", "statistics": stats, "questions": results}
