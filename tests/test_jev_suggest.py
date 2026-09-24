@@ -146,6 +146,54 @@ class TestSuggestionWithMock(unittest.TestCase):
                 self.assertEqual(len(suggestion.t_suggestion.values), 5)
                 self.assertIsNotNone(suggestion.b_suggestion)
     
+    def test_no_stem_marks_review(self):
+        """Test that questions without question_text/stem are marked for review."""
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-key"}):
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.system_one = MagicMock(return_value=make_mock_response())
+            
+            with patch("typesafe_sdk.TypeSafeClient", return_value=mock_client):
+                from question_difficulty.jev_suggest import suggest_question_labels, SuggestionConfig
+                
+                # Sample question has no question_text or stem field
+                suggestion = suggest_question_labels(self.sample_question, SuggestionConfig())
+                
+                # All step suggestions should be marked for review
+                self.assertTrue(suggestion.step_suggestions[0].needs_review)
+                self.assertTrue(any("no question_text" in r for r in suggestion.step_suggestions[0].review_reasons))
+                
+                # T and B should also be marked for review
+                self.assertTrue(suggestion.t_suggestion.needs_review)
+                self.assertTrue(suggestion.b_suggestion.needs_review)
+                
+                # Metadata should indicate no question text
+                self.assertFalse(suggestion.jev_meta.get("has_question_text", True))
+    
+    def test_with_stem_no_review_for_missing_stem(self):
+        """Test that questions WITH question_text are NOT marked for review due to missing stem."""
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-key"}):
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.system_one = MagicMock(return_value=make_mock_response())
+            
+            with patch("typesafe_sdk.TypeSafeClient", return_value=mock_client):
+                from question_difficulty.jev_suggest import suggest_question_labels, SuggestionConfig
+                
+                # Add question_text to the sample
+                question_with_stem = self.sample_question.copy()
+                question_with_stem["question_text"] = "设不等式 |x-2|<1 的解集为..."
+                
+                suggestion = suggest_question_labels(question_with_stem, SuggestionConfig())
+                
+                # Should not have "no question_text" in review reasons
+                self.assertFalse(any("no question_text" in r for r in suggestion.step_suggestions[0].review_reasons))
+                
+                # Metadata should indicate question text is present
+                self.assertTrue(suggestion.jev_meta.get("has_question_text", False))
+    
     def test_dimension_values_extracted(self):
         """Test that dimension values are correctly extracted."""
         expected_dims = {"K": 2, "R": 1, "A": 0, "V": 1, "P": 2, "I": 0}
@@ -248,11 +296,16 @@ class TestConfidenceGating(unittest.TestCase):
             with patch("typesafe_sdk.TypeSafeClient", return_value=mock_client):
                 from question_difficulty.jev_suggest import suggest_question_labels, SuggestionConfig
                 
+                # Add question_text to avoid the no-stem review reason
+                question_with_stem = self.sample_question.copy()
+                question_with_stem["question_text"] = "设不等式 |x-2|<1 的解集为..."
+                
                 config = SuggestionConfig(low_confidence_threshold=0.4)
-                suggestion = suggest_question_labels(self.sample_question, config)
+                suggestion = suggest_question_labels(question_with_stem, config)
                 
                 self.assertTrue(suggestion.step_suggestions[0].needs_review)
-                self.assertIn("K confidence", suggestion.step_suggestions[0].review_reasons[0])
+                # Now the first/only reason should be about low K confidence
+                self.assertTrue(any("K confidence" in r for r in suggestion.step_suggestions[0].review_reasons))
     
     def test_high_confidence_no_review(self):
         """Test that high confidence answers are not marked for review."""
@@ -265,9 +318,14 @@ class TestConfidenceGating(unittest.TestCase):
             with patch("typesafe_sdk.TypeSafeClient", return_value=mock_client):
                 from question_difficulty.jev_suggest import suggest_question_labels, SuggestionConfig
                 
-                config = SuggestionConfig(low_confidence_threshold=0.4)
-                suggestion = suggest_question_labels(self.sample_question, config)
+                # Add question_text to avoid the no-stem review reason
+                question_with_stem = self.sample_question.copy()
+                question_with_stem["question_text"] = "设不等式 |x-2|<1 的解集为..."
                 
+                config = SuggestionConfig(low_confidence_threshold=0.4)
+                suggestion = suggest_question_labels(question_with_stem, config)
+                
+                # With high confidence and question_text present, should not need review
                 self.assertFalse(suggestion.step_suggestions[0].needs_review)
 
 
