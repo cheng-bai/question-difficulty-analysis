@@ -12,6 +12,9 @@ license = "MIT"
 authors = [{name = "cheng-bai"}]
 dependencies = []
 
+[project.optional-dependencies]
+typesafe = ["typesafe-sdk>=0.1.0"]
+
 [project.scripts]
 question-difficulty = "question_difficulty.__main__:main"
 
