@@ -209,12 +209,18 @@ def is_available() -> tuple[bool, str]:
 
 
 def _build_step_state(step: dict, question_context: dict) -> dict:
-    """Build state for step dimension evaluation."""
-    return {
+    """Build state for step dimension evaluation.
+    
+    Uses honest field names:
+    - `question_text`: actual problem stem if provided, otherwise empty
+    - `final_answer`: the final answer to the question
+    - `module`: math module/topic
+    - `stages`: target stages if available
+    """
+    state = {
         "context": {
-            "stem_excerpt": question_context.get("stem", ""),
             "module": question_context.get("module", ""),
-            "answer": question_context.get("answer", ""),
+            "final_answer": question_context.get("final_answer", ""),
         },
         "step": {
             "id": step.get("id", ""),
@@ -228,18 +234,39 @@ def _build_step_state(step: dict, question_context: dict) -> dict:
             "ids": step.get("dependencies", []),
         },
     }
+    
+    # Include optional fields only if present
+    if question_context.get("question_text"):
+        state["context"]["question_text"] = question_context["question_text"]
+    if question_context.get("stages"):
+        state["context"]["stages"] = question_context["stages"]
+    if question_context.get("knowledge_tags"):
+        state["context"]["knowledge_tags"] = question_context["knowledge_tags"]
+    
+    return state
 
 
-def _build_dimension_questions() -> dict:
-    """Build Choice questions for all six dimensions."""
+def _build_dimension_questions(has_question_text: bool) -> dict:
+    """Build Choice questions for all six dimensions.
+    
+    Args:
+        has_question_text: Whether the state includes question_text (stem).
+    """
     from typesafe_sdk import Choice
+    
+    context_note = (
+        "参考 `context.question_text`（题干）、`context.module`（模块）和 `context.final_answer`（最终答案）。"
+        if has_question_text else
+        "参考 `context.module`（模块）和 `context.final_answer`（最终答案）；无题干文本，仅依据步骤内容评分。"
+    )
     
     questions = {}
     for dim, criteria in DIMENSION_CRITERIA.items():
         questions[dim] = Choice(
             instructions={
-                "question": f"根据这个解题步骤的数学动作，{criteria['name']}({dim})应该得几分？",
-                "focus": "只评价这一个步骤的实际数学动作，不因题干含特定词汇给所有步骤重复加分。",
+                "question": f"根据 `step` 中的数学动作，{criteria['name']}({dim})应该得几分？",
+                "context": context_note,
+                "focus": "只评价 `step.action` 的实际数学动作，不因题干含特定词汇给所有步骤重复加分。",
                 "rubric": criteria["name"],
             },
             criteria={
@@ -259,7 +286,8 @@ def _suggest_step_dimensions(
 ) -> StepSuggestion:
     """Suggest dimension scores for a single step."""
     state = _build_step_state(step, question_context)
-    questions = _build_dimension_questions()
+    has_question_text = bool(question_context.get("question_text"))
+    questions = _build_dimension_questions(has_question_text)
     
     response = client.system_one(
         state=state,
@@ -270,6 +298,11 @@ def _suggest_step_dimensions(
     dimensions = {}
     needs_review = False
     review_reasons = []
+    
+    # Mark for review if no question text provided (low-context evaluation)
+    if not has_question_text:
+        needs_review = True
+        review_reasons.append("no question_text (stem) provided; evaluation based on step content only")
     
     for dim in DIMENSIONS:
         answer = response.choices[dim]
@@ -295,15 +328,26 @@ def _suggest_step_dimensions(
     )
 
 
-def _build_t_questions() -> dict:
-    """Build Choice questions for T risk items."""
+def _build_t_questions(has_question_text: bool) -> dict:
+    """Build Choice questions for T risk items.
+    
+    Args:
+        has_question_text: Whether the state includes question_text (stem).
+    """
     from typesafe_sdk import Choice
+    
+    context_note = (
+        "参考 `question.question_text`（题干）、`question.module` 和 `steps_summary`。"
+        if has_question_text else
+        "参考 `question.module`、`question.final_answer` 和 `steps_summary`；无题干文本。"
+    )
     
     questions = {}
     for i, criteria in T_CRITERIA.items():
         questions[f"t{i}"] = Choice(
             instructions={
                 "question": f"T风险第{i}项：{criteria['name']}，风险程度如何？",
+                "context": context_note,
                 "focus": "评估路径结构风险，不因计算较长直接加分。",
             },
             criteria={
@@ -315,15 +359,26 @@ def _build_t_questions() -> dict:
     return questions
 
 
-def _build_b_question() -> dict:
-    """Build Choice question for breakthrough level."""
+def _build_b_question(has_question_text: bool) -> dict:
+    """Build Choice question for breakthrough level.
+    
+    Args:
+        has_question_text: Whether the state includes question_text (stem).
+    """
     from typesafe_sdk import Choice
+    
+    context_note = (
+        "参考 `question.question_text`（题干）中的提示程度和 `steps_summary` 中需要跨越的障碍。"
+        if has_question_text else
+        "参考 `question.module`、`question.final_answer` 和 `steps_summary`；无题干文本，仅依据步骤推断。"
+    )
     
     return {
         "B": Choice(
             instructions={
                 "question": "这道题的关键突破难度(B)是多少？",
-                "focus": "评估独立发现关键一步的难度，不是整体计算量。考虑题干提示程度和需要跨越的具体障碍。",
+                "context": context_note,
+                "focus": "评估独立发现关键一步的难度，不是整体计算量。",
             },
             criteria={
                 "0": B_CRITERIA[0],
@@ -335,31 +390,48 @@ def _build_b_question() -> dict:
     }
 
 
-def _build_ambiguity_question() -> dict:
-    """Build Noul question for material ambiguity check."""
+def _build_ambiguity_question(has_question_text: bool) -> dict:
+    """Build Noul question for material ambiguity check.
+    
+    Args:
+        has_question_text: Whether the state includes question_text (stem).
+    """
     from typesafe_sdk import Noul, NoulCriteria
+    
+    if has_question_text:
+        instructions = {
+            "question": "材料是否存在歧义、版本冲突或缺失图形等影响评分的问题？",
+            "focus": "检查 `question.question_text`、`question.final_answer` 和 `steps_summary` 中可能导致评分不可靠的问题。",
+        }
+    else:
+        instructions = {
+            "question": "仅依据步骤信息，材料是否存在歧义或缺失？",
+            "focus": "注意：无题干文本(`question_text`)；仅检查 `steps_summary` 中可能的问题。",
+            "note": "缺少题干本身会限制评分可靠性，但这里仅检测步骤内容中的歧义。",
+        }
     
     return {
         "has_ambiguity": Noul(
-            instructions={
-                "question": "材料是否存在歧义、版本冲突或缺失图形等影响评分的问题？",
-                "focus": "检查题干、答案或解析中可能导致评分不可靠的问题。",
-            },
+            instructions=instructions,
             criteria=NoulCriteria(
                 true={
                     "what": "存在影响评分的歧义或缺失",
-                    "examples": ["缺少关键图形", "条件有多种理解方式", "答案与解析不一致"],
+                    "examples": ["缺少关键图形", "条件有多种理解方式", "答案与解析不一致", "步骤引用了未给出的条件"],
                 },
                 false={
-                    "what": "材料完整清晰，可以可靠评分",
+                    "what": "给定材料完整清晰，可以在当前信息下评分",
                 },
             ),
         )
     }
 
 
-def _build_question_state(question: dict) -> dict:
-    """Build state for question-level evaluation (T, B, ambiguity)."""
+def _build_question_state(question: dict) -> tuple[dict, bool]:
+    """Build state for question-level evaluation (T, B, ambiguity).
+    
+    Returns:
+        Tuple of (state dict, has_question_text flag).
+    """
     steps_summary = []
     for step in question.get("steps", []):
         steps_summary.append({
@@ -368,29 +440,47 @@ def _build_question_state(question: dict) -> dict:
             "dependencies": step.get("dependencies", []),
         })
     
-    return {
+    # Check for optional question_text/stem field
+    question_text = question.get("question_text") or question.get("stem") or ""
+    has_question_text = bool(question_text)
+    
+    state = {
         "question": {
             "id": question.get("id", ""),
             "module": question.get("module", ""),
-            "answer": question.get("answer", ""),
+            "final_answer": question.get("answer", ""),
         },
         "steps_summary": steps_summary,
         "step_count": len(steps_summary),
     }
+    
+    # Include optional fields only if present
+    if has_question_text:
+        state["question"]["question_text"] = question_text
+    if question.get("stages"):
+        state["question"]["stages"] = question["stages"]
+    if question.get("target_stages"):
+        state["question"]["target_stages"] = question["target_stages"]
+    
+    return state, has_question_text
 
 
 def _suggest_t_and_b(
     question: dict,
     client: Any,
     config: SuggestionConfig,
-) -> tuple[TSuggestion, BSuggestion, bool, str]:
-    """Suggest T risk items, B breakthrough level, and check for ambiguity."""
-    state = _build_question_state(question)
+) -> tuple[TSuggestion, BSuggestion, bool, str, bool]:
+    """Suggest T risk items, B breakthrough level, and check for ambiguity.
+    
+    Returns:
+        Tuple of (t_suggestion, b_suggestion, has_ambiguity, ambiguity_note, has_question_text).
+    """
+    state, has_question_text = _build_question_state(question)
     
     questions = {}
-    questions.update(_build_t_questions())
-    questions.update(_build_b_question())
-    questions.update(_build_ambiguity_question())
+    questions.update(_build_t_questions(has_question_text))
+    questions.update(_build_b_question(has_question_text))
+    questions.update(_build_ambiguity_question(has_question_text))
     
     response = client.system_one(
         state=state,
@@ -403,6 +493,11 @@ def _suggest_t_and_b(
     t_items = []
     t_needs_review = False
     t_review_reasons = []
+    
+    # Mark for review if no question text provided
+    if not has_question_text:
+        t_needs_review = True
+        t_review_reasons.append("no question_text (stem) provided; T evaluation based on steps only")
     
     for i in range(1, 6):
         answer = response.choices[f"t{i}"]
@@ -437,7 +532,13 @@ def _suggest_t_and_b(
     
     b_needs_review = b_confidence < config.low_confidence_threshold
     b_review_reasons = []
-    if b_needs_review:
+    
+    # Mark for review if no question text provided
+    if not has_question_text:
+        b_needs_review = True
+        b_review_reasons.append("no question_text (stem) provided; B evaluation based on steps only")
+    
+    if b_confidence < config.low_confidence_threshold:
         b_review_reasons.append(f"B confidence {b_confidence:.2f} below threshold")
     
     b_suggestion = BSuggestion(
@@ -455,7 +556,7 @@ def _suggest_t_and_b(
     if has_ambiguity:
         ambiguity_note = f"[Jev检测到潜在问题，概率{ambiguity_prob:.2f}] 材料可能存在歧义、版本冲突或缺失图形，建议人工复核后再确定评分。"
     
-    return t_suggestion, b_suggestion, has_ambiguity, ambiguity_note
+    return t_suggestion, b_suggestion, has_ambiguity, ambiguity_note, has_question_text
 
 
 def suggest_question_labels(
@@ -466,11 +567,18 @@ def suggest_question_labels(
     
     Args:
         question: Question dict with steps, id, module, answer fields.
+            Optional fields:
+            - question_text or stem: actual problem text (if available)
+            - stages or target_stages: goal stages (if available)
         config: Configuration for suggestion behavior.
     
     Returns:
         QuestionSuggestion with all suggested labels and metadata,
         or None if Jev is not available.
+    
+    Note:
+        When no question_text/stem is provided, suggestions are marked
+        needs_review since evaluation is based only on step content.
     """
     available, msg = is_available()
     if not available:
@@ -481,18 +589,29 @@ def suggest_question_labels(
     
     from typesafe_sdk import TypeSafeClient
     
-    # Build question context for step evaluation
+    # Build question context for step evaluation with honest field names
+    # Use question_text or stem if provided; otherwise leave empty
+    question_text = question.get("question_text") or question.get("stem") or ""
+    
     question_context = {
-        "stem": question.get("answer", ""),
+        "final_answer": question.get("answer", ""),
         "module": question.get("module", ""),
-        "answer": question.get("answer", ""),
     }
+    
+    # Include optional fields only if present
+    if question_text:
+        question_context["question_text"] = question_text
+    if question.get("stages"):
+        question_context["stages"] = question["stages"]
+    if question.get("target_stages"):
+        question_context["stages"] = question["target_stages"]
     
     step_suggestions = []
     jev_meta: dict[str, Any] = {
         "model": config.model,
         "confidence_threshold": config.confidence_threshold,
         "low_confidence_threshold": config.low_confidence_threshold,
+        "has_question_text": bool(question_text),
     }
     
     with TypeSafeClient() as client:
@@ -505,7 +624,7 @@ def suggest_question_labels(
             step_suggestions.append(step_suggestion)
         
         # Suggest T, B, and check ambiguity
-        t_suggestion, b_suggestion, has_ambiguity, ambiguity_note = _suggest_t_and_b(
+        t_suggestion, b_suggestion, has_ambiguity, ambiguity_note, has_question_text = _suggest_t_and_b(
             question, client, config
         )
     
@@ -522,6 +641,7 @@ def suggest_question_labels(
                 for dim, d in s.dimensions.items()
             },
             "needs_review": s.needs_review,
+            "review_reasons": s.review_reasons,
         }
         for s in step_suggestions
     ]
@@ -529,12 +649,14 @@ def suggest_question_labels(
         "values": t_suggestion.values,
         "items": t_suggestion.items,
         "needs_review": t_suggestion.needs_review,
+        "review_reasons": t_suggestion.review_reasons,
     }
     jev_meta["b_details"] = {
         "value": b_suggestion.value,
         "confidence": b_suggestion.confidence,
         "probabilities": b_suggestion.probabilities,
         "needs_review": b_suggestion.needs_review,
+        "review_reasons": b_suggestion.review_reasons,
     }
     jev_meta["ambiguity"] = {
         "detected": has_ambiguity,
